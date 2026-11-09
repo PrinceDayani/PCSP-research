@@ -20,6 +20,7 @@ Free means openly readable (arXiv or open web). Publisher means the publisher pa
 | Parallel Context Compaction for Long-Horizon Agent Serving | [arXiv](https://arxiv.org/html/2605.23296v1) | Free |
 | Less Context, Better Agents | [arXiv](https://arxiv.org/abs/2606.10209) | Free |
 | Tool Attention Is All You Need (MCP tools tax) | [arXiv](https://arxiv.org/html/2604.21816v1) | Free |
+| Concord: When Agent Context Goes Stale | [arXiv](https://arxiv.org/html/2610.05281) | Free |
 | Persistent Context Graphs for Memory Compaction (ReCAP) | [arXiv](https://arxiv.org/abs/2609.40118) / [Microsoft Research](https://www.microsoft.com/en-us/research/publication/persistent-context-graphs-for-efficient-memory-compaction-in-llm-agents/) | Free |
 
 ## KV cache and stateful serving
@@ -48,6 +49,13 @@ Free means openly readable (arXiv or open web). Publisher means the publisher pa
 | ComplexMCP | [arXiv](https://arxiv.org/html/2605.10787v2) | Free |
 | Notation Matters: Token-Optimized Formats in Agentic AI | [arXiv](https://arxiv.org/html/2605.29676v1) | Free |
 | MCP Tool Descriptions Are Smelly | [arXiv](https://arxiv.org/html/2602.14878v1) | Free |
+
+## Provenance and attribution
+| Title | Link | Access |
+|---|---|---|
+| Beyond Memory: Templated Substrate for Collaborative Knowledge Work with LLM Agents | [arXiv](https://arxiv.org/html/2607.24759v1) | Free |
+| From Agent Traces to Trust: Evidence Tracing and Execution Provenance | [arXiv](https://arxiv.org/html/2606.04990v6) | Free |
+| When Agents Write Live Storefronts | [Laioutr blog](https://www.laioutr.com/en/blog/agent-driven-edits-change-provenance-frontend-layer) | Free |
 
 ## Security
 | Title | Link | Access |

@@ -37,6 +37,7 @@ An exact-phrase search for "Persistent Context Streaming Protocol" returned no r
 - [Stateful Inference for Low-Latency Multi-Agent Tool Calling](https://arxiv.org/abs/2605.26289): delta-only cost via a persistent KV cache (inference-server level).
 - [Enhancing MCP with Context-Aware Server Collaboration](https://arxiv.org/html/2601.11595v2): shared context store for MCP servers.
 - [MCP Server Architecture Patterns for LLM-Integrated Applications](https://arxiv.org/html/2606.30317v1): stateful session pattern for MCP.
+- [Concord: When Agent Context Goes Stale](https://arxiv.org/html/2610.05281): links each tool observation to its source, detects source changes, and updates, annotates or suppresses stale context before reuse. Closest work to PCSP's freshness idea; it keeps context consistent but does not stream live deltas or select what reaches the model.
 - [TokenPilot: Cache-Efficient Context Management for LLM Agents](https://arxiv.org/html/2606.17016v1)
 - [Don't Break the Cache: Prompt Caching for Long-Horizon Agentic Tasks](https://arxiv.org/html/2601.06007v2)
 - [SAMEP: Secure Protocol for Persistent Context Sharing Across AI Agents](https://arxiv.org/abs/2507.10562)
@@ -55,12 +56,17 @@ An exact-phrase search for "Persistent Context Streaming Protocol" returned no r
 - [after-effects-mcp (HeroicSwan)](https://github.com/HeroicSwan/after-effects-mcp)
 - [after-effects-mcp (JUNKDOGE-JOE)](https://github.com/JUNKDOGE-JOE/after-effects-mcp)
 
+### Provenance and attribution
+- [Beyond Memory: A Templated Substrate for Heterogeneous Collaborative Knowledge Work with LLM Agents](https://arxiv.org/html/2607.24759v1): by-human-via-agent attribution line used as an awareness primitive across sessions.
+- [From Agent Traces to Trust: Evidence Tracing and Execution Provenance in LLM Agents](https://arxiv.org/html/2606.04990v6)
+- [When Agents Write Live Storefronts](https://www.laioutr.com/en/blog/agent-driven-edits-change-provenance-frontend-layer): provenance captured before an agent write is applied.
+
 ## Open gaps
 
 1. **User edits versus agent edits.** Agents cannot reliably tell the two apart on a shared canvas. See [When to Hand Off, When to Work Together](https://arxiv.org/html/2603.02050v5).
 2. **Fine-grained delta merging.** Whole-field replacement loses concurrent edits inside the same field. See [design-os-studio issue 75](https://github.com/jangtrinh/design-os-studio/issues/75).
 3. **Delta encoding of tool state for token savings.** No benchmark found comparing state-diff streaming against full re-sends in MCP.
-4. **Security of pushed persistent context.** Staleness, provenance and poisoning of a live stream. See [Always-On Agents survey](https://arxiv.org/html/2606.30306v1) and [Memory poisoning study](https://arxiv.org/html/2606.04329v1).
+4. **Security of pushed persistent context.** Staleness, provenance and poisoning of a live stream. Staleness handling overlaps with [Concord: When Agent Context Goes Stale](https://arxiv.org/html/2610.05281), so differentiate from it. See [Always-On Agents survey](https://arxiv.org/html/2606.30306v1) and [Memory poisoning study](https://arxiv.org/html/2606.04329v1).
 5. **Which events deserve the model's attention.** Proactive-agent work decides when to intervene but is not tied to MCP sessions with a token budget. See [Do Proactive Agents Need an LLM to Decide When to Act?](https://arxiv.org/abs/2605.30152).
 
 ## Suggested scope
