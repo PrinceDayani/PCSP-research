@@ -10,3 +10,5 @@ Each file here is an idea that connects to PCSP but is better written as its own
 | [event-salience-for-agents.md](event-salience-for-agents.md) | Which events deserve the model's attention |
 | [multi-agent-pcsp.md](multi-agent-pcsp.md) | Sharing a PCSP session across several agents |
 | [creative-tool-state-schemas.md](creative-tool-state-schemas.md) | Standard state schemas for creative tools |
+
+See [roadmap.md](roadmap.md) for how these ideas are bundled into the planned series of six papers.

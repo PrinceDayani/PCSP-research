@@ -57,5 +57,13 @@ Cite and differentiate from: MCP Events, the asynchronous interrupt paper, Conte
 - Prompt caching already reduces cost for repeated prefixes, so compare against it.
 - Prototype covers one tool; generality is future work.
 
+## 12. Layer-neutral core and bindings
+Decision: PCSP is a general persistent-context layer, not only a model-to-tool protocol. The core spec is written independent of transport. Endpoints can be model to tool, agent to agent, or agent to human interface.
+- Core spec defines: session state, deltas, cursors, origin tags, freshness markers, context selection.
+- Binding 1 (MCP): fully implemented and evaluated in the first paper, with After Effects.
+- Binding 2 (A2A): described in the first paper only as a short section (about half a page) saying the design extends to agent-to-agent sharing. Full treatment is paper C in [related-papers/roadmap.md](related-papers/roadmap.md).
+- Cheap hook in the core spec: per-participant cursors, so the multi-agent paper follows naturally.
+- Before claiming anything about A2A, check what A2A already offers for streaming and task state.
+
 ## 11. Scope guard
 Keep the main paper to ideas 1 to 5 plus the evaluation. Security depth, multi-agent sharing, and other directions go to [related-papers/](related-papers/).
