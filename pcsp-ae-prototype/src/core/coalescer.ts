@@ -11,56 +11,73 @@ interface Pending {
   change: Change;
   firstTs: number;
   lastTs: number;
-  firstPrev: Change['prev'];
 }
 
 export class Coalescer {
   private pending = new Map<string, Pending>();
-  private passthrough: Change[] = [];
+  private queue: Change[] = [];
 
   constructor(private readonly options: CoalescerOptions = DEFAULT_COALESCER) {}
 
   push(change: Change, now: number = change.ts): void {
     if (change.op !== 'set' || change.path === undefined) {
-      this.flushKey(`${change.entry_id}`, now, true);
-      this.passthrough.push(change);
+      this.release(change.entry_id);
+      this.queue.push(change);
       return;
     }
     const key = `${change.entry_id}\u0000${change.path}\u0000${change.origin}`;
     const existing = this.pending.get(key);
-    if (existing) {
-      existing.change = { ...change, prev: existing.firstPrev };
-      existing.lastTs = now;
-    } else {
-      this.pending.set(key, { change, firstTs: now, lastTs: now, firstPrev: change.prev });
+    if (!existing) {
+      this.pending.set(key, { change, firstTs: now, lastTs: now });
+      return;
     }
+    const merged: Change = { ...change, prev: existing.change.prev };
+    if (existing.change.conflict || change.conflict) merged.conflict = true;
+    existing.change = merged;
+    existing.lastTs = now;
   }
 
   ready(now: number): Change[] {
-    const out: Change[] = [...this.passthrough];
-    this.passthrough = [];
     for (const [key, p] of this.pending) {
       const quiet = now - p.lastTs >= this.options.windowMs;
       const held = now - p.firstTs >= this.options.maxHoldMs;
       if (quiet || held) {
-        out.push(p.change);
+        this.queue.push(p.change);
         this.pending.delete(key);
       }
     }
-    return out.sort((a, b) => a.ts - b.ts);
+    return this.drain(this.barrier());
   }
 
   flushAll(): Change[] {
-    const out: Change[] = [...this.passthrough, ...[...this.pending.values()].map((p) => p.change)];
-    this.passthrough = [];
+    for (const p of this.pending.values()) this.queue.push(p.change);
     this.pending.clear();
-    return out.sort((a, b) => a.ts - b.ts);
+    return this.drain(Infinity);
   }
 
-  private flushKey(entry_id: string, now: number, force: boolean): void {
+  private barrier(): number {
+    let lowest = Infinity;
+    for (const p of this.pending.values()) lowest = Math.min(lowest, p.change.version);
+    return lowest;
+  }
+
+  private drain(barrier: number): Change[] {
+    this.queue.sort((a, b) => a.version - b.version);
+    const cut = this.queue.findIndex((c) => c.version >= barrier);
+    if (cut === -1) {
+      const out = this.queue;
+      this.queue = [];
+      return out;
+    }
+    const out = this.queue.slice(0, cut);
+    this.queue = this.queue.slice(cut);
+    return out;
+  }
+
+  private release(entry_id: string): void {
     for (const [key, p] of this.pending) {
-      if (p.change.entry_id === entry_id && (force || now - p.lastTs >= this.options.windowMs)) {
-        this.passthrough.push(p.change);
+      if (p.change.entry_id === entry_id) {
+        this.queue.push(p.change);
         this.pending.delete(key);
       }
     }

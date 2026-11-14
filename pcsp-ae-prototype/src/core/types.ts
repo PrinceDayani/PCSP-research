@@ -19,6 +19,7 @@ export type ChangeOp = 'add' | 'remove' | 'set' | 'move' | 'splice';
 
 export interface Change {
   change_id: string;
+  version: number;
   op: ChangeOp;
   entry_id: string;
   origin: Origin;

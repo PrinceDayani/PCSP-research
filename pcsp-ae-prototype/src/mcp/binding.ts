@@ -1,7 +1,6 @@
-import type { Change, Json } from '../core/types.js';
-import type { Session } from '../core/session.js';
-import type { StateStore } from '../core/state-store.js';
-import { StaleWriteError } from '../core/state-store.js';
+import { randomUUID } from 'node:crypto';
+import type { DeltaMessage, Json } from '../core/types.js';
+import { ResyncRequiredError, type Session } from '../core/session.js';
 import { select } from '../core/selection.js';
 
 export interface ToolDefinition {
@@ -10,61 +9,102 @@ export interface ToolDefinition {
   inputSchema: Record<string, unknown>;
 }
 
+const consumerOnly = { type: 'object', properties: { consumer_id: { type: 'string' } }, required: ['consumer_id'] };
+
 export const PCSP_TOOLS: ToolDefinition[] = [
   { name: 'pcsp.open', description: 'Open a PCSP session and receive a snapshot', inputSchema: { type: 'object', properties: { consumer_id: { type: 'string' }, budget: { type: 'number' } }, required: ['consumer_id'] } },
-  { name: 'pcsp.pull', description: 'Return deltas after the last delivered version', inputSchema: { type: 'object', properties: { consumer_id: { type: 'string' }, budget: { type: 'number' }, focus: { type: 'array', items: { type: 'string' } } }, required: ['consumer_id'] } },
-  { name: 'pcsp.ack', description: 'Acknowledge a version', inputSchema: { type: 'object', properties: { consumer_id: { type: 'string' }, version: { type: 'number' } }, required: ['consumer_id', 'version'] } },
-  { name: 'pcsp.resync', description: 'Request a fresh snapshot', inputSchema: { type: 'object', properties: { consumer_id: { type: 'string' } }, required: ['consumer_id'] } },
+  { name: 'pcsp.pull', description: 'Return selected deltas after the delivery cursor', inputSchema: { type: 'object', properties: { consumer_id: { type: 'string' }, budget: { type: 'number' }, focus: { type: 'array', items: { type: 'string' } } }, required: ['consumer_id'] } },
+  { name: 'pcsp.ack', description: 'Acknowledge a delivered version', inputSchema: { type: 'object', properties: { consumer_id: { type: 'string' }, version: { type: 'number' } }, required: ['consumer_id', 'version'] } },
+  { name: 'pcsp.heartbeat', description: 'Keep the session alive', inputSchema: consumerOnly },
+  { name: 'pcsp.resync', description: 'Request a fresh snapshot', inputSchema: consumerOnly },
   { name: 'pcsp.resume', description: 'Resume from a last acknowledged version', inputSchema: { type: 'object', properties: { consumer_id: { type: 'string' }, last_version: { type: 'number' } }, required: ['consumer_id', 'last_version'] } },
-  { name: 'pcsp.close', description: 'Close the session for a consumer', inputSchema: { type: 'object', properties: { consumer_id: { type: 'string' } }, required: ['consumer_id'] } },
+  { name: 'pcsp.close', description: 'Close the session for a consumer', inputSchema: consumerOnly },
 ];
 
 export interface BindingResult {
   ok: boolean;
   data?: Json;
-  error?: { code: string; message: string; current?: Json };
+  error?: { code: string; message: string };
+}
+
+function text(args: Record<string, Json>, key: string): string {
+  const value = args[key];
+  if (typeof value !== 'string' || value === '') throw new Error(`${key} must be a non-empty string`);
+  return value;
+}
+
+function num(args: Record<string, Json>, key: string, fallback?: number): number {
+  const value = args[key];
+  if (value === undefined && fallback !== undefined) return fallback;
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`${key} must be a number`);
+  return value;
+}
+
+function ok(data: unknown): BindingResult {
+  return { ok: true, data: data === null ? null : (JSON.parse(JSON.stringify(data)) as Json) };
 }
 
 export class McpBinding {
-  constructor(private readonly session: Session, private readonly store: StateStore) {}
+  constructor(private readonly session: Session) {}
 
   handle(name: string, args: Record<string, Json>, now: number): BindingResult {
     try {
       switch (name) {
         case 'pcsp.open': {
-          const consumer_id = String(args.consumer_id);
-          const accept = this.session.open(consumer_id, Number(args.budget ?? 2000), now);
+          const consumer_id = text(args, 'consumer_id');
+          const accept = this.session.open(consumer_id, num(args, 'budget', 2000), now);
           const snapshot = this.session.snapshotFor(consumer_id);
-          return { ok: true, data: JSON.parse(JSON.stringify({ accept, snapshot })) };
+          return ok({ accept, snapshot });
         }
-        case 'pcsp.pull': {
-          const consumer_id = String(args.consumer_id);
-          this.session.flush(now);
-          const delta = this.session.deltaFor(consumer_id);
-          if (!delta) return { ok: true, data: null };
-          const focus = new Set<string>(Array.isArray(args.focus) ? args.focus.map(String) : []);
-          const pending = delta.changes.map((change: Change, i: number) => ({ version: delta.base_version + i + 1, change }));
-          const result = select({ pending, budget: Number(args.budget ?? 2000), focusEntries: focus, now });
-          return { ok: true, data: JSON.parse(JSON.stringify({ delta: { ...delta, changes: result.included.map((p) => p.change) }, summarized: result.summarized, truncated: result.truncated, cursor: result.cursor })) };
-        }
+        case 'pcsp.pull':
+          return this.pull(args, now);
         case 'pcsp.ack':
-          this.session.ack(String(args.consumer_id), Number(args.version), now);
-          return { ok: true, data: null };
+          this.session.ack(text(args, 'consumer_id'), num(args, 'version'), now);
+          return ok(null);
+        case 'pcsp.heartbeat':
+          return ok(this.session.heartbeat(text(args, 'consumer_id'), now));
         case 'pcsp.resync':
-          return { ok: true, data: JSON.parse(JSON.stringify(this.session.resync(String(args.consumer_id)))) };
+          return ok(this.session.resync(text(args, 'consumer_id')));
         case 'pcsp.resume':
-          return { ok: true, data: JSON.parse(JSON.stringify(this.session.resume(String(args.consumer_id), Number(args.last_version)))) };
+          return ok(this.session.resume(text(args, 'consumer_id'), num(args, 'last_version'), now));
         case 'pcsp.close':
-          this.session.close(String(args.consumer_id));
-          return { ok: true, data: null };
+          this.session.close(text(args, 'consumer_id'));
+          return ok(null);
         default:
           return { ok: false, error: { code: 'unknown_tool', message: name } };
       }
     } catch (e) {
-      if (e instanceof StaleWriteError) {
-        return { ok: false, error: { code: 'stale_write', message: e.message, current: e.current } };
-      }
+      if (e instanceof ResyncRequiredError) return { ok: false, error: { code: 'resync_required', message: e.message } };
       return { ok: false, error: { code: 'error', message: e instanceof Error ? e.message : String(e) } };
     }
+  }
+
+  private pull(args: Record<string, Json>, now: number): BindingResult {
+    const consumer_id = text(args, 'consumer_id');
+    this.session.touch(consumer_id, now);
+    this.session.flush(now);
+    const view = this.session.pendingFor(consumer_id);
+    if (!view || view.pending.length === 0) return ok(null);
+    const budget = Math.min(num(args, 'budget', view.budget), view.budget);
+    const focus = new Set<string>(Array.isArray(args.focus) ? args.focus.map(String) : []);
+    const result = select({
+      pending: view.pending,
+      delivered: view.delivered,
+      baseCursor: view.base,
+      budget,
+      focusEntries: focus,
+      now,
+    });
+    const cursor = this.session.commit(consumer_id, result.included, now);
+    const delta: DeltaMessage = {
+      type: 'delta',
+      session_id: this.session.session_id,
+      sender: 'source',
+      message_id: randomUUID(),
+      base_version: view.base,
+      version: result.included.length ? result.included[result.included.length - 1].version : cursor,
+      changes: result.included,
+    };
+    return ok({ delta, summarized: result.summarized, truncated: result.truncated, cursor });
   }
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Change, DeltaMessage, Entry, Json, Origin, StateTree } from './types.js';
+import type { Change, Entry, Json, Origin, StateTree } from './types.js';
 
 export interface ChangeInput {
   op: Change['op'];
@@ -25,7 +25,6 @@ export class StaleWriteError extends Error {
 export class StateStore {
   private tree: StateTree;
   private version = 0;
-  private history: { version: number; change: Change }[] = [];
   private lastTouch = new Map<string, { version: number; origin: Origin }>();
 
   constructor(rootType = 'project') {
@@ -45,35 +44,38 @@ export class StateStore {
     return this.tree.entries[entry_id];
   }
 
-  historyFrom(version: number): { version: number; change: Change }[] | null {
-    if (version > this.version) return null;
-    if (this.history.length === 0) return version === this.version ? [] : null;
-    const oldest = this.history[0].version;
-    if (version < oldest - 1) return null;
-    return this.history.filter((h) => h.version > version);
-  }
-
-  apply(inputs: ChangeInput[]): DeltaMessage['changes'] {
+  apply(inputs: ChangeInput[]): Change[] {
+    const backup =
+      inputs.length > 1
+        ? { tree: structuredClone(this.tree), version: this.version, lastTouch: new Map(this.lastTouch) }
+        : null;
     const out: Change[] = [];
-    for (const input of inputs) {
-      const entry = this.tree.entries[input.entry_id];
-      this.checkExpected(input, entry);
-      const change = this.applyOne(input, entry);
-      this.version += 1;
-      const touch = this.lastTouch.get(input.entry_id);
-      if (
-        input.origin === 'user' &&
-        touch &&
-        touch.origin === 'agent' &&
-        this.version - touch.version <= 1
-      ) {
-        change.conflict = true;
+    try {
+      for (const input of inputs) out.push(this.applyInput(input));
+    } catch (error) {
+      if (backup) {
+        this.tree = backup.tree;
+        this.version = backup.version;
+        this.lastTouch = backup.lastTouch;
       }
-      this.lastTouch.set(input.entry_id, { version: this.version, origin: input.origin });
-      this.history.push({ version: this.version, change });
-      out.push(change);
+      throw error;
     }
     return out;
+  }
+
+  private applyInput(input: ChangeInput): Change {
+    const entry = this.tree.entries[input.entry_id];
+    this.checkExpected(input, entry);
+    const change = this.applyOne(input, entry);
+    this.version += 1;
+    change.version = this.version;
+    if (input.op === 'remove') return change;
+    const touch = this.lastTouch.get(input.entry_id);
+    if (input.origin === 'user' && touch?.origin === 'agent' && this.version - touch.version <= 1) {
+      change.conflict = true;
+    }
+    this.lastTouch.set(input.entry_id, { version: this.version, origin: input.origin });
+    return change;
   }
 
   private checkExpected(input: ChangeInput, entry: Entry | undefined): void {
@@ -86,13 +88,14 @@ export class StateStore {
   }
 
   private base(input: ChangeInput): Change {
-    return { change_id: randomUUID(), op: input.op, entry_id: input.entry_id, origin: input.origin, ts: Date.now() };
+    return { change_id: randomUUID(), version: 0, op: input.op, entry_id: input.entry_id, origin: input.origin, ts: Date.now() };
   }
 
   private applyOne(input: ChangeInput, entry: Entry | undefined): Change {
     const change = this.base(input);
     switch (input.op) {
       case 'add': {
+        if (!input.entry_id) throw new Error('add requires entry_id');
         if (!input.parent_id || !this.tree.entries[input.parent_id]) throw new Error('add requires existing parent_id');
         if (this.tree.entries[input.entry_id]) throw new Error('entry already exists');
         const parent = this.tree.entries[input.parent_id];
@@ -117,15 +120,19 @@ export class StateStore {
       }
       case 'set': {
         if (!entry || !input.path) throw new Error('set requires entry and path');
+        if (input.value === undefined) throw new Error('set requires value');
         const prev = entry.properties[input.path];
-        entry.properties[input.path] = input.value as Json;
+        entry.properties[input.path] = input.value;
         return { ...change, path: input.path, value: input.value, prev };
       }
       case 'move': {
         if (!entry || !entry.parent_id || !input.parent_id) throw new Error('move requires entry and parent_id');
-        const oldParent = this.tree.entries[entry.parent_id];
         const newParent = this.tree.entries[input.parent_id];
         if (!newParent) throw new Error('move target parent missing');
+        for (let cursor: string | null = input.parent_id; cursor; cursor = this.tree.entries[cursor]?.parent_id ?? null) {
+          if (cursor === entry.entry_id) throw new Error('cannot move an entry into its own subtree');
+        }
+        const oldParent = this.tree.entries[entry.parent_id];
         oldParent.children = oldParent.children.filter((c) => c !== entry.entry_id);
         const index = input.index ?? newParent.children.length;
         newParent.children.splice(index, 0, entry.entry_id);
@@ -137,12 +144,17 @@ export class StateStore {
         const current = entry.properties[input.path];
         const start = input.start ?? 0;
         const del = input.delete_count ?? 0;
+        if (start < 0 || del < 0) throw new Error('splice start and delete_count must not be negative');
         let next: Json;
         if (typeof current === 'string') {
-          next = current.slice(0, start) + String(input.insert ?? '') + current.slice(start + del);
+          if (input.insert !== undefined && typeof input.insert !== 'string') {
+            throw new Error('splice on a string property requires a string insert');
+          }
+          next = current.slice(0, start) + (input.insert ?? '') + current.slice(start + del);
         } else if (Array.isArray(current)) {
           const copy = current.slice();
-          copy.splice(start, del, ...(Array.isArray(input.insert) ? input.insert : input.insert === undefined ? [] : [input.insert]));
+          const items = Array.isArray(input.insert) ? input.insert : input.insert === undefined ? [] : [input.insert];
+          copy.splice(start, del, ...items);
           next = copy;
         } else {
           throw new Error('splice requires string or array property');
@@ -158,5 +170,6 @@ export class StateStore {
     if (!entry) return;
     for (const child of entry.children) this.removeSubtree(child);
     delete this.tree.entries[entry_id];
+    this.lastTouch.delete(entry_id);
   }
 }

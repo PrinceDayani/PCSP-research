@@ -17,7 +17,7 @@ A session is identified by session_id. The Source owns the authoritative state. 
 The Source keeps a monotonically increasing integer version. Every accepted change increments it by one. A snapshot carries the version it reflects.
 
 ### 2.3 Cursor
-Each participant has its own cursor. A cursor is the highest version that participant has acknowledged. The Source MUST NOT assume a Consumer has seen a version until it is acknowledged. Cursors are per participant so more than one Consumer can attach to one session.
+Each participant has its own cursor. A cursor is the highest version that participant has acknowledged. The Source MUST NOT assume a Consumer has seen a version until it is acknowledged. Cursors are per participant so more than one Consumer can attach to one session. The Source also keeps a delivery cursor per Consumer: the highest version such that every change up to it has been sent. Changes sent above the delivery cursor, because earlier changes were deferred, are tracked by change_id and are not sent again. An ack MUST NOT exceed the highest version sent.
 
 ### 2.4 Origin tag
 Every change carries an origin with one of four values: user, agent, tool, system. The Source MUST set origin. A Consumer MUST NOT overwrite it.
@@ -51,7 +51,7 @@ All messages carry: type, session_id, sender, message_id. Messages that refer to
 - close: either direction. Fields: reason.
 - error: either direction. Fields: code, message, retryable.
 
-A delta is valid only if its base_version equals the Consumer's last applied version. Otherwise the Consumer MUST enter STALE and send resync.
+A delta is valid only if its base_version equals the delivery cursor the Consumer last applied. A Consumer MUST ignore a change whose change_id it has already applied. Otherwise the Consumer MUST enter STALE and send resync. If the delivery cursor is older than the retained history, the Source answers with resync_required and the Consumer MUST resync.
 
 ## 5. Delta format
 
@@ -73,7 +73,7 @@ Rules:
 4. If two changes from different origins touch the same entry and path within one coalescing window, the Source MUST emit both with their origins and MUST NOT merge them silently.
 
 ### 5.1 Coalescing
-Rapid changes to the same entry and path, for example dragging a layer, are coalesced. The Source holds changes for a coalescing window (default 250 ms, negotiable in open) and emits one set whose value is the latest and whose prev is the value before the first change in the window. The final change in a burst MUST be flushed when the burst ends or when the window's maximum hold time (default 2 s) is reached.
+Rapid changes to the same entry and path, for example dragging a layer, are coalesced. The Source holds changes for a coalescing window (default 250 ms, negotiable in open) and emits one set whose value is the latest, whose prev is the value before the first change in the window, whose version is the version of the last merged change, and whose conflict flag is true if any merged change had it. The final change in a burst MUST be flushed when the burst ends or when the window's maximum hold time (default 2 s) is reached. Changes are emitted in version order: a change MUST NOT be emitted while an earlier version is still held, and a non-set change on an entry releases that entry's held changes first.
 
 ## 6. Origin and conflict handling
 
@@ -107,15 +107,16 @@ Each pending change gets a score from these factors, weights set by configuratio
 2. Score each change.
 3. Always include: conflicts, user-origin changes on entries referenced by the task, and errors.
 4. Fill the remaining budget in descending score order.
-5. Changes that do not fit are summarized as counts per entry type, for example 14 property changes on 6 layers, and kept pending. They are not dropped.
-6. Included changes are marked delivered. The model's cursor advances only to the highest version fully delivered with nothing skipped before it. Summarized changes remain retrievable by a read request on the entry.
+5. Changes that do not fit are summarized as counts per entry_id, for example 14 property changes on layer 3, and kept pending. They are not dropped.
+6. A change deferred for longer than the maximum deferral (default 30 s) joins the always-include set.
+7. Included changes are marked delivered. The delivery cursor advances only to the highest version fully delivered with nothing skipped before it. Delivered changes above a skipped one are not sent again.
 
 ### 8.4 Delivery timing
 - defer: default. Pending context is placed in the window at the start of the next turn.
 - interrupt: allowed only for conflict true changes, user-origin changes on the entry the agent is currently editing, and errors. An interrupt MUST respect a minimum gap between interrupts (default 5 s) to avoid flooding.
 
 ### 8.5 Budget degradation
-If the budget is smaller than the always-include set, the layer sends the always-include set as compact entries and sets truncated true, so the model knows context was cut. The layer MUST NOT silently drop an always-include change.
+If the budget is smaller than the always-include set, the layer sends the whole always-include set and sets truncated true, so the model knows context was cut. The layer MUST NOT silently drop an always-include change.
 
 ## 9. Trust and limits
 
@@ -130,7 +131,8 @@ If the budget is smaller than the always-include set, the layer sends the always
 3. Snapshot: returned as the result of pcsp.open or pcsp.resync.
 4. Deltas and events: delivered over the Streamable HTTP SSE stream or the subscriptions/listen stream where the client supports it. A client without push support polls with pcsp.pull, which returns deltas after a given version.
 5. ack, resync, resume and heartbeat map to pcsp.ack, pcsp.resync, pcsp.resume and pcsp.heartbeat.
-6. Compatibility: PCSP deltas MAY be carried as the payload of MCP Events. PCSP adds cursors, origin, conflict marking and selection on top of event delivery and does not replace it.
+6. pcsp.pull result: delta (base_version is the previous delivery cursor, version is the last included version), summarized (counts per entry_id), truncated, and cursor. It returns null when nothing is pending. A Consumer that is STALE or behind the retained history receives the error code resync_required.
+7. Compatibility: PCSP deltas MAY be carried as the payload of MCP Events. PCSP adds cursors, origin, conflict marking and selection on top of event delivery and does not replace it.
 
 ## 11. Out of scope for this draft
 
