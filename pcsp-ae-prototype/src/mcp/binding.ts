@@ -1,8 +1,8 @@
-import type { Change, Json } from './types.js';
-import type { Session } from './session.js';
-import type { StateStore } from './state-store.js';
-import { StaleWriteError } from './state-store.js';
-import { select } from './selection.js';
+import type { Change, Json } from '../core/types.js';
+import type { Session } from '../core/session.js';
+import type { StateStore } from '../core/state-store.js';
+import { StaleWriteError } from '../core/state-store.js';
+import { select } from '../core/selection.js';
 
 export interface ToolDefinition {
   name: string;
